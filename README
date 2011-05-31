@@ -1,0 +1,258 @@
+===============================================================================
+README
+===============================================================================
+
+This is a demonstration of Manger's Oracle* using a modified version of 
+libgcrypt to expose the oracle directly (instead of relying on timing 
+information).  
+
+* A Chosen Ciphertext Attack on RSA Optimal Asymmetric Encryption Padding 
+ (OAEP) as Standardized in PKCS #1 v2.0
+  http://portal.acm.org/citation.cfm?id=704143
+
+You MUST use a specific, modified, version of libgcrypt for this example to 
+work. To set it up:
+
+1)  Create a directory structure that looks like this:
+
+ mangers-oracle-example/ # This you can name whatever
+   libs/
+     lib/
+   oracle/               # This too I suppose
+     Makefile
+     decryptoracle.c
+     encryptoracle.c
+     mangersoracle.py
+
+2)  cd mangers-oracle-example/libs/
+3)  git clone git://git.gnupg.org/libgcrypt.git
+4)  cd libgcrypt/
+5)  git checkout 2d559392b5d2044fc780bfec211f1af9317a5b8f .
+6)  echo "--- a/cipher/pubkey.c
++++ b/cipher/pubkey.c
+@@ -1132,7 +1132,7 @@ oaep_decode (gcry_mpi_t *r_result, unsigned int nbits, int algo,
+   if (frame[0])
+     {
+       gcry_free (frame);
+-      return GPG_ERR_ENCODING_PROBLEM;
++      return GPG_ERR_NO_OBJ;//GPG_ERR_ENCODING_PROBLEM;
+     }
+
+   dlen = gcry_md_get_algo_dlen (algo);" | patch -p1
+
+You should see "patching file cipher/pubkey.c".
+This adds an oracle we will use.
+
+7)  echo "--- a/cipher/pubkey.c
++++ b/cipher/pubkey.c
+@@ -2266,6 +2266,7 @@ gcry_pk_decrypt (gcry_sexp_t *r_plain, gcry_sexp_t s_data, gcry_sexp_t s_skey)
+       rc = oaep_decode (&unpad, gcry_pk_get_nbits (s_skey), ctx.hash_algo,
+                        plain, ctx.label, ctx.labellen);
+       mpi_free (plain);
++      plain = NULL;
+       if (rc)
+        goto leave;
+       plain = unpad;" | patch -p1
+   
+You should see "patching file cipher/pubkey.c  Hunk #1 succeeded at 2266 with fuzz 2."
+This fixes a bug that caused crashes on my machine that are not included in 
+this revision.
+
+8)  ./autogen.sh    # If you get dependecy errors
+9)  ./configure     # on these three steps, you're 
+10) make            # on your own to resolve them
+11) ln -s $(pwd)/src/.libs/libgcrypt.* ../lib/
+12) cd ../../oracle
+13) make
+14) ./encrypt              # You should see hexadecimal output
+15) ./decrypt $(./encrypt) # You should see 11223344556677889900AABBCCDDEEFF1122334455667788
+16) ./mangersoracle.py
+
+===============================================================================
+FAQ/DEBUGGING
+===============================================================================
+
+-------------------------------------------------------
+What's up with the weird lib directories?
+
+The -L ../libs/lib -Wl,-rpath,../libs/lib in the Makefile tells the binaries to
+load libraries from a specific directory at runtime.  This lets you build 
+libraries and test with them without needing to install them in /usr/local or
+jump through a lot of hoops.  I put them in the lib/ directory just for 
+cleanliness.
+
+-------------------------------------------------------
+How can I check the libraries I made are being used?
+
+man ldd
+
+$ ldd decrypt
+        linux-gate.so.1 =>  (0xb7847000)
+        libgcrypt.so.11 => ../libs/lib/libgcrypt.so.11 (0xb77c5000)
+        libstdc++.so.6 => /usr/lib/gcc/i686-pc-linux-gnu/4.4.5/libstdc++.so.6 (0xb76a9000)
+        libm.so.6 => /lib/libm.so.6 (0xb7683000)
+        libgcc_s.so.1 => /usr/lib/gcc/i686-pc-linux-gnu/4.4.5/libgcc_s.so.1 (0xb7667000)
+        libc.so.6 => /lib/libc.so.6 (0xb750b000)
+        libgpg-error.so.0 => /usr/lib/libgpg-error.so.0 (0xb7506000)
+        /lib/ld-linux.so.2 (0xb7848000)
+
+You can see libgcrypt is being loaded from a relative directory.  That's 
+crucial.
+
+If you see this ouput:
+    $ ./encrypt
+    Failure encrypting: User defined source 1 / Invalid flag
+
+Then, you're using the system-installed libraries (libgcrypt isn't recognizing
+the oaep flag).  You should see something like this:
+
+    $ ./encrypt
+    00B4AF97EA4A17017C54A498116BA4C12F3AC22A997D47AE2B455A5619F9404EC6A0DF855C1E90DE13504A356A79CB0A6E2B1D467386107F45F6D885257BAD693A19AA51F6CD9E782797DF9CCEA40BDA7AEB5FEC82EACD8B1CA75D8BD8FCEB78447EC60C4CB389877A2ACFE6C3B78F713C6E255BD12B8B5AEE32AF7A65B460A758
+
+Note that the output changes with every run.
+
+-------------------------------------------------------
+You cheated!  You modified the source to create an oracle!
+
+Yes.
+
+-------------------------------------------------------
+'make' fails with an error about documentation
+
+Disable the docs build by editing Makefile.am, removing doc from DIST_SUBDIRS 
+and SUBDIRS and rerun ./configure
+
+-------------------------------------------------------
+Does it work with other keys?
+
+Sure.  I generated a 2048 key and it worked fine:
+static const char sample_secret_key[] =
+"(private-key"
+" (rsa"
+"  (n #c37e043054d00026b34cce10f96d46c32f00e765beddaae402a54ebc182dc1dfa7"
+"      39699a493a494c9214ff8d499417954a5193b87841fec2a653aebdc38a0b01b0f5"
+"      b9d0ce366f8c7cc68b1539c9631b30c25346e5557bc80efd2d3bbffdc80b116911"
+"      9a3382382885936dadbc19e9ab17f1756fd705773b1e8e69469be8448628822ccf"
+"      5aed1ba968d50155745915cb05681baf7b7f3ce8f2b1b4f00cc9e1ec30a91bf85b"
+"      96509c3d221c0f5e63a8fd39495bf74dce87b03ab515181493b8589ef9930a4431"
+"      dec3f69c73cc571fb0ca29982c141c6f33344382a3f52752bb0d612033cb08b618"
+"      31afb30f4b6e4a1bf9047d781ea50fc6c4e855f94bf4dfe7dd#)"
+"  (e #010001#)"
+"  (d #98946f92856fbede75cd397c9821093ce81fcd7b65283fec2c80775e6984b52fe9"
+"      a5eedd63d0214ba92cc874aefbee1830645166863e04284a873ff88e78dcb45a38"
+"      bfe9d0393e8129161191e483615de4859757db41081692545a8cab01d9b381c83e"
+"      dbdade0514e384b8f303c039d7b71d576a8e298ef0ce9d9a5f68ea35281cbc1d81"
+"      55755b3210c1d0cdc9ba7d7b13f89ca849dacffb5b01f8c5a149274bc7e7a7714b"
+"      318629ff34d72de41d7ff1b6cc8014101615c099515458695e529eeed016967c50"
+"      42694a253b23a532ab29c1e232a1b31321677fc045d37b277aefcaf7743d1aba88"
+"      098a8dc92d75136bcf0d043130b8389189fcab32e737dadb61#)"
+"  (p #c4d44f5488d138db689561bb5b9461ad7321b18c385aefc950bd12ca58d65c0324"
+"      fcfacf0ec91d63179f461e345989b9beccf53c5d906b955497fad33b52085b16f1"
+"      0e15d7c93f6a3050b89c02a14720e3a7ca11c7d1f6b40fff5ce7fbc5bc0a78573b"
+"      31b3c3dcc131ab1e89581874836f54edfe121cff7870bf1928677b29c9#)"
+"  (q #fe42ce76911cffae22bdfc90197a4803a3a9caa3fe2f700fa84b87140f8e1545da"
+"      791e758137b71a11e733285876467c2c8b9768b43454cbc0b697584dbfd9274a07"
+"      619a6346b61d5e76bef68876435cc8e6491da4a442ba85713e0dd742a26fb80c13"
+"      043592b121b6c6105277f6902b6ebc4140c0b4a906e6478448ac8ed775#)"
+"  (u #c741caade6b2f140577c978acfc6dae0934dd1bdc374035937a4fb251e4eb27df1"
+"      e2c9596047bddfebacbae2034162a1325bd293866a627b5b9aa69e256206100164"
+"      84bfbd99a28dd6545d817ff3a13f3609ec8cb52748ae61fd91613d813186da1c7d"
+"      90ae6c61bbfd6baf0dda926332064723113e7612bb55221ecce04c0b73#)))";
+static const char sample_public_key[] =
+"(public-key"
+" (rsa"
+"  (n #c37e043054d00026b34cce10f96d46c32f00e765beddaae402a54ebc182dc1dfa7"
+"      39699a493a494c9214ff8d499417954a5193b87841fec2a653aebdc38a0b01b0f5"
+"      b9d0ce366f8c7cc68b1539c9631b30c25346e5557bc80efd2d3bbffdc80b116911"
+"      9a3382382885936dadbc19e9ab17f1756fd705773b1e8e69469be8448628822ccf"
+"      5aed1ba968d50155745915cb05681baf7b7f3ce8f2b1b4f00cc9e1ec30a91bf85b"
+"      96509c3d221c0f5e63a8fd39495bf74dce87b03ab515181493b8589ef9930a4431"
+"      dec3f69c73cc571fb0ca29982c141c6f33344382a3f52752bb0d612033cb08b618"
+"      31afb30f4b6e4a1bf9047d781ea50fc6c4e855f94bf4dfe7dd#)"
+"  (e #010001#)))";
+
+
+===============================================================================
+TIMING ATTACK
+===============================================================================
+
+If a failure occurs in the integer-to-octets conversion - that is, the 
+decrypted plaintext overflows into the 0th byte- the function oaep_decode 
+(cipher/pubkey.c) exits early:
+
+  /* FRAME = 00 || MASKED_SEED || MASKED_DB */
+  if (frame[0])
+    {
+      gcry_free (frame);
+      return GPG_ERR_ENCODING_PROBLEM; 
+    }
+
+http://git.gnupg.org/cgi-bin/gitweb.cgi?p=libgcrypt.git;a=blob;f=cipher/pubkey.c;h=ba888f3d4596774b3bdcb7add252cbd8bfebc3e0;hb=2d559392b5d2044fc780bfec211f1af9317a5b8f
+
+Although very small, this is enough to build a local timing attack against 
+libgcrypt.  Although it is not 100% reliable, I have successfully completed 
+decryption using Manger's Oracle based solely on timing information. 
+
+You can confirm the timing differential yourself:
+
+1)  cd timing/
+2)  make
+3)  ./buildTiming.py
+4)  Each trials.X output file should be entered as a column in Gnumeric 
+   (Note that Excel doesn't have the type of graph we need)
+5)  The columns should be selected, and a box-plot graph created.  
+   (In Gnumeric, this is under the 'Statistics' subheader.)
+6)  Assuming the machine was sufficiently quiet, a graph similar to the one
+    labeled example-times.png should have been produced.
+7)  We can see that after the 2nd column the following columns have a 
+    consistently lower (faster) execution time than the first two columns
+    Although any individual measurement may have been through the range 
+   (indicated by the minimum and maximum lines), the 75th through 25th 
+    percentile values (shown by the boxes in the graphs) are consistent. 
+
+===============================================================================
+ERRATA
+===============================================================================
+
+During the implementation I encountered two errata in Manger's original paper.
+
+In step 1.3b: 
+       "This implies f1 E [B,2B) for a known (even) multiple f1. Rephrasing this gives (f1/2) * m E [B/2,B) " 
+should be 
+       "This implies f1 * m E [B,2B) for a known (even) multiple f1. Rephrasing this gives (f1/2) * m E [B/2,B) "
+
+That is, (f1*m) instead of f1.  This is just a typo.
+
+
+
+In step 3.3
+       3.3 Select a boundary point, in + B, near the range of ftmp * m. i = floor( (ftmp*mmin) / n ).
+should be
+       3.3 Select a boundary point, in + B, near the range of ftmp * m. i = ceil( (ftmp*mmin) / n ).
+       
+That is, ceil instead of floor. 
+
+These may be verified experimentally with the included proof of concept.
+
+===============================================================================
+MISC
+===============================================================================
+
+Source: https://github.com/GDSSecurity/mangers-oracle
+
+Author
+	Tom Ritter 
+	tom@ritter.vg / tritter@gdssecurity.com
+	http://ritter.vg / http://gdssecurity.com
+
+Obviously not possible without the work of James Manger
+
+James Manger. 2001. A Chosen Ciphertext Attack on RSA Optimal Asymmetric 
+  Encryption Padding (OAEP) as Standardized in PKCS #1 v2.0. 
+  In Proceedings of the 21st Annual International Cryptology Conference on 
+  Advances in Cryptology (CRYPTO '01), Joe Kilian (Ed.). 
+  Springer-Verlag, London, UK, 230-238.
+  
+Thanks to Mike Arpaia[1] and Gotham Digital Science[2]
+ [1] http://apt-sec.org/
+ [2] http://gdssecurity.com
