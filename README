@@ -234,6 +234,22 @@ That is, ceil instead of floor.
 
 These may be verified experimentally with the included proof of concept.
 
+-------
+Update: After talking with James Manger, he notes:
+
+   [the change] should work in almost all common cases, though I suspect it 
+   could still fail in some corner cases.  The real flaw isn't actually in 
+   choosing the boundary i in step 3.3, but in choosing f_3 in step 3.4. Step 
+   3.4 chooses f_3 so the bottom of the m range once multiplied is just bigger 
+   than a multiple of the modulus. Instead, it should choose f_3 so the MIDDLE
+   of the m range once multiplied is a close as possible to the i * n + B 
+   point. That would mean that even if the step 3.3 rounding meant the f * m 
+   width was smaller than hoped (eg just less than B, instead of close to 2B), 
+   the range would still span the i * n + B boundary so the Oracle check would 
+   still reduce the range.
+
+More background if you should need to refer to it.
+
 ===============================================================================
 MISC
 ===============================================================================
